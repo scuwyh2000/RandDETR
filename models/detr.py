@@ -20,7 +20,7 @@ from .transformer import build_transformer
 
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbone, transformer, num_classes, num_queries, aux_loss=False):
+    def __init__(self, backbone, transformer, num_classes, num_queries, aux_loss=False, num_rand=20):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -34,8 +34,10 @@ class DETR(nn.Module):
         self.num_queries = num_queries
         self.transformer = transformer
         hidden_dim = transformer.d_model
-        self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
-        self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+        self.num_rand = num_rand
+        self.hidden_dim = hidden_dim
+        self.class_embed = nn.Linear(hidden_dim*2, num_classes + 1)
+        self.bbox_embed = MLP(hidden_dim*2, hidden_dim, 4, 3)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
@@ -61,9 +63,18 @@ class DETR(nn.Module):
         features, pos = self.backbone(samples)
 
         src, mask = features[-1].decompose()
+        
         assert mask is not None
-        hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0]
-
+        src = self.input_proj(src)
+        hs,mem,enc_img = self.transformer(src, mask, self.query_embed.weight, pos[-1])
+        hs = hs[-1].unsqueeze(0)
+        enc_img_qur = enc_img.unsqueeze(2).repeat(1,1,100,1)
+        hs = torch.cat((hs,enc_img_qur),3)
+        bz=hs.shape[1]
+        rand = torch.rand(1,bz,self.num_rand,self.hidden_dim).cuda()
+        enc_img_rand = enc_img.unsqueeze(2).repeat(1,1,self.num_rand,1)
+        rand = torch.cat((rand,enc_img_rand),3)
+        hs = torch.cat((hs,rand),2)
         outputs_class = self.class_embed(hs)
         outputs_coord = self.bbox_embed(hs).sigmoid()
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
@@ -327,6 +338,7 @@ def build(args):
         num_classes=num_classes,
         num_queries=args.num_queries,
         aux_loss=args.aux_loss,
+        num_rand=args.num_rand
     )
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
