@@ -54,9 +54,10 @@ class Transformer(nn.Module):
 
         tgt = torch.zeros_like(query_embed)
         memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
+        encode_img = memory[0].unsqueeze(0)
         hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
                           pos=pos_embed, query_pos=query_embed)
-        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
+        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w),encode_img
 
 
 class TransformerEncoder(nn.Module):
